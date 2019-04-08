@@ -1,0 +1,21 @@
+version: '3'
+services:
+  mysql:
+    image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY_NAME_MYSQL:${CIRCLE_SHA1}
+    environment:
+      MYSQL_ROOT_PASSWORD: some_password
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress_password
+    deploy:
+      replicas: 2
+  wordpress:
+    image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY_NAME_WP:${CIRCLE_SHA1}
+    environment:
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress_password
+      WORDPRESS_DB_NAME: wordpress
+    ports:
+      - 8000:80
+    deploy:
+      replicas: 2

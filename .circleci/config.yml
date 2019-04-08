@@ -1,0 +1,95 @@
+version: 2
+jobs:
+  build_push:
+    docker:
+      - image: circleci/python:3.6.1
+    environment:
+      AWS_DEFAULT_OUTPUT: json
+      ECR_REPOSITORY_NAME_WP: wp
+      ECR_REPOSITORY_NAME_MYSQL: mysql
+      ECR_REPOSITORY_NAME_NGINX: nginx
+      ECR_REPOSITORY_NAME_PHPFPM: php-fpm
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Setup common environment variables
+          command: |
+            echo 'export FULL_IMAGE_NAME_WP="${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-1.amazonaws.com/${ECR_REPOSITORY_NAME_WP}:${CIRCLE_SHA1}"' >> $BASH_ENV
+            echo 'export FULL_IMAGE_NAME_MYSQL="${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-1.amazonaws.com/${ECR_REPOSITORY_NAME_MYSQL}:${CIRCLE_SHA1}"' >> $BASH_ENV
+            echo 'export FULL_IMAGE_NAME_NGINX="${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-1.amazonaws.com/${ECR_REPOSITORY_NAME_NGINX}:${CIRCLE_SHA1}"' >> $BASH_ENV
+            echo 'export FULL_IMAGE_NAME_PHPFPM="${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-1.amazonaws.com/${ECR_REPOSITORY_NAME_PHPFPM}:${CIRCLE_SHA1}"' >> $BASH_ENV
+      - run:
+          name: Build image
+          command: |
+            pwd
+            ls -al ./
+            docker build -t $FULL_IMAGE_NAME_WP -f ./wp/Dockerfile .
+            docker build -t $FULL_IMAGE_NAME_MYSQL -f ./mysql/Dockerfile .
+            docker build -t $FULL_IMAGE_NAME_NGINX -f ./nginx/Dockerfile .
+            docker build -t $FULL_IMAGE_NAME_PHPFPM -f ./php-fpm/Dockerfile .
+      - run:
+          name: Test image
+          command: |
+            docker run -d -p 8000:80 --name wp-test $FULL_IMAGE_NAME_WP
+            docker run -d --name mysql-test $FULL_IMAGE_NAME_MYSQL
+            docker run -d -p 8080:80 --name nginx-test $FULL_IMAGE_NAME_NGINX
+            docker run -d --name phpfpm-test $FULL_IMAGE_NAME_PHPFPM
+      - restore_cache:
+          key: v1-{{ checksum "requirements.txt" }}
+      - run:
+          name: Install awscli
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install -r requirements.txt
+      - save_cache:
+          key: v1-{{ checksum "requirements.txt" }}
+          paths:
+            - "venv"
+      - run:
+          name: Push image
+          command: |
+            . venv/bin/activate
+            eval $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+            docker push $FULL_IMAGE_NAME_WP
+            docker push $FULL_IMAGE_NAME_MYSQL
+            docker push $FULL_IMAGE_NAME_NGINX
+            docker push $FULL_IMAGE_NAME_PHPFPM
+  deploy_api:
+    machine:
+      image: circleci/classic:201808-01
+      enabled: true
+    environment:
+      AWS_DEFAULT_OUTPUT: json
+      ECR_REPOSITORY_NAME_WP: wp
+      ECR_REPOSITORY_NAME_MYSQL: mysql
+      ECR_REPOSITORY_NAME_NGINX: nginx
+      ECR_REPOSITORY_NAME_PHPFPM: php-fpm
+    steps:
+      - checkout
+      - run:
+          name: Get certificate files
+          command: |
+            aws s3 cp ${CA_PEM} ./ca.pem
+            aws s3 cp ${CERT_PEM} ./cert.pem
+            aws s3 cp ${KEY_PEM} ./key.pem
+      - run:
+          name: Deploy
+          command: |
+            eval $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+            docker --tls --tlscacert=./ca.pem --tlscert=./cert.pem --tlskey=./key.pem -H tcp://${SERVER_IP}:2376 stack deploy wp-test -c ./docker-compose-wp.yml --with-registry-auth
+            docker --tls --tlscacert=./ca.pem --tlscert=./cert.pem --tlskey=./key.pem -H tcp://${SERVER_IP}:2376 stack deploy np-test -c ./docker-compose-np.yml --with-registry-auth
+            docker --tls --tlscacert=./ca.pem --tlscert=./cert.pem --tlskey=./key.pem -H tcp://${SERVER_IP}:2376 service ls
+workflows:
+  version: 2
+  build_push_deploy:
+    jobs:
+      - build_push
+      - deploy_api:
+          requires:
+            - build_push
+          filters: 
+            branches:
+              only:
+                - master
