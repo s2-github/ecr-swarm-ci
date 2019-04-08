@@ -7,10 +7,10 @@ services:
     depends_on:
       - php
     deploy:
-      replicas: 3
+      replicas: 2
   php:
     image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY_NAME_PHPFPM:${CIRCLE_SHA1}
     volumes:
       - $DOCKER_DIRECTORY/code:/code
     deploy:
-      replicas: 3
+      replicas: 2
